@@ -1,0 +1,206 @@
+# openwrt界面里面复制进去会保存在：/etc/mosdns/config_custom.yaml
+
+log:
+  level: info
+  file: "/root/mosdns.log"
+
+plugins:
+  # 不走代理的缓存
+  - tag: cache
+    type: cache
+    args:
+      size: 10240
+      lazy_cache_ttl: 86400
+
+  # 走代理的缓存
+  - tag: cache_proxy
+    type: cache
+    args:
+      size: 10240
+      lazy_cache_ttl: 86400
+
+  # 转发至本地原始DNS，并发查询，这里需要验证一下那边dns服务器是否支持tcp和pipeline，支持才能启用pipeline
+  - tag: forward_local
+    type: forward
+    args:
+      concurrent: 1
+      upstreams:
+        - addr: tcp://x.x.x.x
+          # enable_pipeline: true
+        - addr: tcp://x.x.x.x
+          # enable_pipeline: true
+
+  # 转发至国外DNS，并发查询
+  - tag: forward_remote
+    type: forward
+    args:
+      concurrent: 1
+      upstreams:
+        - addr: tcp://8.8.8.8
+          socks5: "127.0.0.1:8015"
+          enable_pipeline: true
+          max_conns: 20
+        - addr: tls://8.8.8.8
+          socks5: "127.0.0.1:8015"
+          enable_pipeline: true
+          max_conns: 20
+        - addr: "https://dns.google/dns-query"
+          socks5: "127.0.0.1:8015"
+          max_conns: 20
+
+  - tag: fakedns
+    type: forward
+    args:
+      upstreams:
+        - addr: tcp://127.0.0.1:5354
+          enable_pipeline: true
+
+  # 自定义hosts
+  - tag: hosts
+    type: hosts
+    args:
+      files:
+        - "/etc/mosdns/hosts.txt"
+
+  # china ip
+  - tag: china_ip
+    type: ip_set
+    args:
+      files:
+        - /etc/mosdns/geo/geoip_cn.txt
+        - /etc/mosdns/geo/geoip_private.txt
+
+  # china ip和自己的vps ip
+  - tag: local_ip
+    type: ip_set
+    args:
+      files:
+        - /etc/mosdns/geo/geoip_cn.txt
+        - /etc/mosdns/ip-direct.txt
+        - /etc/mosdns/geo/geoip_private.txt
+
+  - tag: local_ptr
+    type: domain_set
+    args:
+      files:
+        - /etc/mosdns/local-ptr.txt
+
+
+  - tag: fakedns_sequence
+    type: sequence
+    args:
+      - exec: drop_resp
+      - exec: $fakedns
+      - exec: ttl 30
+      - matches: has_resp
+        exec: accept
+      - exec: query_summary fakedns failed
+
+  - tag: local_sequence
+    type: sequence
+    args:
+      - exec: drop_resp
+      - exec: $cache # 缓存
+      - matches: has_resp
+        exec: accept # 必须直接接受，不然会刷新cache??
+      - exec: $forward_local
+      - matches: has_resp
+        exec: accept
+      - exec: query_summary local failed
+
+  # 解析出的ip添加至ipset，添加前先判断是否为国内ip或内网ip
+  - tag: do_proxy
+    type: sequence
+    args:
+      # 不是国内IP(走代理IP)，才加NFTset
+      - matches: "!resp_ip $local_ip"
+        exec: nftset inet,v2ray,proxy_v4,ipv4_addr,32 inet,v2ray,proxy_v6,ipv6_addr,64
+      - exec: accept
+
+  - tag: remote_error
+    type: sequence
+    args:
+      - exec: query_summary remote returned china ip # 手动处理分流错误，从分流列表里删除。
+      - exec: goto local_sequence
+
+  # 解析出的ip添加至ipset，添加前先判断是否为国内ip或内网ip
+  - tag: remote_sequence
+    type: sequence
+    args:
+      - exec: $cache_proxy
+      - matches: has_resp
+        exec: goto do_proxy
+      - exec: $forward_remote
+      - matches: resp_ip $china_ip # 任意IP匹配国内
+        exec: goto remote_error
+      - matches: has_resp
+        exec: goto do_proxy
+      - exec: query_summary remote failed
+
+  - tag: reverse_dns
+    type: reverse_lookup
+    args:
+      size: 65535 # 内置缓存大小。默认 65535。
+      # 缓存时间。秒。默认 7200 (2h)。应答记录的 TTL 也会被自动修改，限制在该值以下。
+      ttl: 7200
+      # 是否主动处理/响应 PTR 请求。如果 PTR 的 IP 命中缓存，则生成应答。
+      # 用途举例: 使用网络监视类工具查看网络连接时，开启域名反查功能大概率会看到 IP 对应的
+      # 真实域名(如果程序先请求域名再建立连接，而且域名经过了该插件处理。)
+      handle_ptr: false
+
+  # 主运行序列
+  - tag: main_sequence
+    type: sequence
+    args:
+      # # 禁止PTR解析
+      # - matches:
+      #   - qtype 12
+      #   - qname $local_ptr
+      #   exec: reject 3
+      # 开启PTR反查
+      - exec: $reverse_dns
+      - matches: has_resp
+        exec: accept
+
+      # 匹配hosts
+      - exec: $hosts
+      - matches: has_resp
+        exec: accept
+
+      - matches: qtype 65
+        exec: reject 3
+
+      - matches: qname &/etc/mosdns/blocklist.txt
+        exec: reject
+
+      # 梯子 名单
+      - matches: qname &/etc/mosdns/tizi-list.txt
+        exec: $forward_remote
+      - matches: has_resp
+        exec: accept
+
+      # fakeDNS 名单
+      - matches: qname &/etc/mosdns/warp-list.txt
+        exec: goto fakedns_sequence
+      # 不走代理名单
+      - matches: qname &/etc/mosdns/direct-list.txt
+        exec: goto local_sequence
+      # 走代理名单
+      - matches: qname &/etc/mosdns/proxy-list.txt
+        exec: goto remote_sequence
+      # 其他：走本地
+      - exec: goto local_sequence
+
+
+  # 启动监听服务
+  - tag: udp_server
+    type: udp_server
+    args:
+      entry: main_sequence
+      listen: :5353
+
+  - tag: tcp_server
+    type: tcp_server
+    args:
+      entry: main_sequence
+      listen: :5353

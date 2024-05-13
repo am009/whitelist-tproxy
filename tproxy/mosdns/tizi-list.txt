@@ -1,0 +1,2 @@
+# 走国外DNS，但是不走代理的域名列表（机场）
+# domain:xxxxx.skin

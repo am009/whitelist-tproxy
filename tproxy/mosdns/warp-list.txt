@@ -1,0 +1,4 @@
+domain:bing.com
+# OpenAI
+domain:openai.com
+full:chat.openai.com.cdn.cloudflare.net

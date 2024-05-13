@@ -1,0 +1,174 @@
+{
+  "log": {
+    "loglevel": "warning",
+    "error": "/root/xray_log/error.log",
+    "access": "none"
+  },
+  "inbounds": [
+    {
+      "listen": "0.0.0.0",
+      "port": 8010,
+      "protocol": "http",
+      "tag": "http-proxy"
+    },
+    {
+      "listen": "0.0.0.0",
+      "port": 8011,
+      "protocol": "socks",
+      "sniffing": {
+        "enabled": true
+      },
+      "settings": {
+        "udp": true
+      },
+      "tag": "socks-proxy"
+    },
+    {
+      "port": 5354,
+      "tag": "dns-in",
+      "protocol": "dokodemo-door",
+      "settings": {
+        "address": "x.x.x.x",
+        "port": 53,
+        "network": "tcp,udp"
+      }
+    },
+    {
+      "port": 12345,
+      "protocol": "dokodemo-door",
+      "settings": {
+        "network": "tcp,udp",
+        "followRedirect": true
+      },
+      "sniffing": {
+        "enabled": true,
+        "metadataOnly": true,
+        "destOverride": [
+          "fakedns"
+        ]
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tproxy": "tproxy",
+          "mark": 255
+        }
+      },
+      "tag": "tproxy"
+    }
+  ],
+  "outbounds": [
+    {
+      // 这里填代理连接
+      "protocol": "shadowsocks",
+      "settings": {
+        "servers": [
+          {
+            "address": "xxx",
+            "password": "xxx",
+            "method": "aes-256-gcm",
+            "port": 12345
+          }
+        ]
+      },
+      "streamSettings": {
+        "sockopt": {
+          "mark": 255
+        }
+      },
+      "mux": {
+        "enable": true
+      },
+      "tag": "proxy"
+    },
+    {
+      "protocol": "freedom",
+      "settings": {},
+      "tag": "direct",
+      "streamSettings": {
+        "sockopt": {
+          "mark": 255
+        }
+      }
+    },
+    {
+      "protocol": "blackhole",
+      "settings": {
+        "response": {
+          "type": "http"
+        }
+      },
+      "tag": "block",
+      "streamSettings": {
+        "sockopt": {
+          "mark": 255
+        }
+      }
+    },
+    {
+      "protocol": "dns",
+      "tag": "dns-out"
+    }
+  ],
+  "routing": {
+    // 不把域名解析到IP。未知的走代理
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["dns-in"],
+        "outboundTag": "dns-out"
+      },
+      {
+        "type": "field",
+        "outboundTag": "direct",
+        "protocol": [
+          "bittorrent"
+        ]
+      },
+      // 这里负责的仅是socks5端口和http端口的分流
+      {
+        "type": "field",
+        "domains": [
+          "geosite:private",
+          "geosite:cn"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "geoip:private",
+          "geoip:cn"
+        ],
+        "outboundTag": "direct"
+      },
+      { // 代理端口最后默认走代理。弥补透明代理访问不知名网站时直连的不足。
+        "type": "field",
+        "inboundTag": [
+          "http-proxy",
+          "socks-proxy"
+        ],
+        "outboundTag": "proxy"
+      }
+    ]
+  },
+  "stats": {},
+  "dns": {
+    "servers": [
+      // 直连的时候用的DNS
+      "x.x.x.x",
+      {
+        "address": "fakedns",
+        "domains": [
+          "geosite:openai"
+        ]
+      }
+    ]
+  },
+  "fakedns": [
+    {
+      "ipPool": "198.19.0.0/16",
+      "poolSize": 65535
+    }
+  ]
+}
