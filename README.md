@@ -49,7 +49,6 @@ opkg install openssh-sftp-server nano curl wget-ssl screen atop htop socat tcpdu
 
 **初始配置：**
 
-- 增加网速
 - 删除ULA prefix，优化IPv6体验。
 - 增加以下系统的备份目录 （System - Backup/Flash Firmware - Configuration）
   - /usr/share/nftables.d/
