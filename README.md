@@ -18,6 +18,8 @@
 - 需要维护一下域名列表，挑选一下走代理的域名。或者遇到走不了的切换socks5代理
 - 访问不知名的小网站（不在白名单列表）时可能需要切换一下socks端口，或者手动将其加入白名单列表。
 
+**安装前注意是否是较新版的OpenWRT系统，需要防火墙使用nftables而不是iptables(执行`nft list ruleset`)**
+
 ## 架构
 
 - 系统：原版Openwrt(Ubuntu等其他发行版理论上也可以)
@@ -49,10 +51,12 @@ opkg install openssh-sftp-server nano curl wget-ssl screen atop htop socat tcpdu
 
 **初始配置：**
 
+- （按需）修改root密码，增加SSH公钥，允许wan访问SSH，访问luci
 - 删除ULA prefix，优化IPv6体验。
 - 增加以下系统的备份目录 （System - Backup/Flash Firmware - Configuration）
   - /usr/share/nftables.d/
   - /opt/v2ray/config.json
+- 删除DNS设置中的rebind protect，允许DNS解析到内网地址。
 
 ### 2. 基于策略的路由
 
